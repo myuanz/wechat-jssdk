@@ -15,6 +15,8 @@ import Store from './store/Store';
 import FileStore from './store/FileStore';
 import got, { Options } from 'got';
 import { WeChatOptions } from './WeChatOptions';
+import deepmerge from 'deepmerge';
+import { isPlainObject } from 'is-plain-object';
 
 const debug = debugFnc('wechat-Payment');
 
@@ -113,36 +115,25 @@ class Payment {
   paymentAPI: WeChatPaymentAPIConfig;
   notifyUrl: string;
   store: Store;
-  paymentAgent: Agent;
+  paymentAgent?: Agent;
 
-  constructor(options?: WeChatOptions) {
+  constructor(options: WeChatOptions) {
     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
     checkPassedConfiguration(options);
 
-    this.options = isEmpty(options)
-      ? /* istanbul ignore next  */ { ...wxConfig }
-      : {
-          ...wxConfig,
-          ...options,
-          payment: {
-            ...wxConfig.payment,
-            ...options.payment,
-            paymentAPI: {
-              ...wxConfig.payment.paymentAPI,
-              ...(options.payment && options.payment.paymentAPI),
-            },
-          },
-        };
+    this.options = deepmerge(wxConfig, options, {
+      isMergeableObject: isPlainObject,
+    });
 
-    this.paymentConfig = this.options.payment;
+    this.paymentConfig = this.options.payment as WeChatPaymentConfig;
 
     /* istanbul ignore if  */
     if (!this.paymentConfig.merchantId) {
       throw new Error('Payment merchant id not found!');
     }
 
-    this.paymentAPI = this.paymentConfig.paymentAPI;
+    this.paymentAPI = this.paymentConfig.paymentAPI as WeChatPaymentAPIConfig;
     /* istanbul ignore else  */
     if (this.paymentConfig.paymentSandBox) {
       this.paymentAPI = utils.paymentUrlsWithSandBox(this.paymentAPI);
@@ -154,7 +145,7 @@ class Payment {
     /* istanbul ignore if  */
     if (!options.store || !(options.store instanceof Store)) {
       debug('[Payment]Store not provided, using default FileStore...');
-      this.store = new FileStore(options.storeOptions);
+      this.store = new FileStore(options);
     } else {
       this.store = options.store;
     }
@@ -289,7 +280,7 @@ class Payment {
     signType: string,
     sandbox?: boolean,
   ): PaymentSignatureObject {
-    const originalKeys = Object.keys(params);
+    const originalKeys = Object.keys(params) as Array<keyof typeof params>;
     const keys = originalKeys.filter((key) => {
       const val = params[key];
       return (
@@ -299,7 +290,7 @@ class Payment {
         val !== null
       );
     });
-    const newParams = {};
+    const newParams = {} as any;
     keys.forEach((key) => {
       newParams[key] = params[key];
     });
@@ -496,6 +487,8 @@ class Payment {
     );
     return this.download(this.paymentAPI.DOWNLOAD_BILL, data, {
       decompress: !noGzip,
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
       encoding: null, // get zip file as buffer
     });
   }
@@ -565,21 +558,29 @@ class Payment {
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
       const stream = got.stream(url, myOptions);
-      const chunks = [];
+      const chunks: Uint8Array[] = [];
       let body = '';
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
       let response;
       stream.on('response', (res) => {
         response = res;
       });
-      stream.on('data', (chunk) => {
+      stream.on('data', (chunk: Uint8Array) => {
         chunks.push(chunk);
       });
       stream.on('end', () => {
         const ret = Buffer.concat(chunks);
         body = ret.toString();
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore
         if (!response || response.statusCode != 200) {
           let str = 'request failed';
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
           if (response) {
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-ignore
             str += ' with status code: ' + response.statusCode;
           }
           debug(str);
@@ -600,9 +601,13 @@ class Payment {
           //return the request stream
           data: stream,
           body,
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
           digest: response.headers['digest'],
         });
       });
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
       stream.on('error', (error, body, response) => {
         debug(error);
         reject({
@@ -665,7 +670,7 @@ class Payment {
     info: Record<string, unknown>,
     attempts?: number,
   ): Promise<SimpleRequestResult> {
-    if (attempts > MAX_SANDBOX_SIGN_KEY_ERROR_ATTEMPTS) {
+    if ((attempts ?? 0) > MAX_SANDBOX_SIGN_KEY_ERROR_ATTEMPTS) {
       const msg = 'maximum sandbox key error attempts reached!';
       debug(msg);
       return Promise.reject(new Error(msg));
@@ -766,10 +771,11 @@ class Payment {
    * @param {Boolean=} getSandboxKey the sandbox api key should also use the original payment api key
    */
   getAPISignKey(getSandboxKey?: boolean): string {
-    return getSandboxKey ||
-      /* istanbul ignore next */ !this.paymentConfig.paymentSandBox
+    return (getSandboxKey ||
+    /* istanbul ignore next */ !this.paymentConfig.paymentSandBox
       ? this.paymentConfig.paymentKey
-      : /* istanbul ignore next */ this.paymentConfig.paymentSandBoxKey;
+      : /* istanbul ignore next */ this.paymentConfig
+          .paymentSandBoxKey) as string;
   }
 
   /**
@@ -783,12 +789,10 @@ class Payment {
     parsedXMLData: Record<string, unknown>;
     decryptedData: Record<string, unknown>;
   }> {
-    const data: {
-      req_info?: string;
-    } = await utils.parseXML(xmlResult);
+    const data = await utils.parseXML(xmlResult);
     const originalData = data;
     const md5Key = utils.genMD5(this.getAPISignKey());
-    const bufferData = utils.createBufferFromBase64(data.req_info);
+    const bufferData = utils.createBufferFromBase64(data.req_info as string);
     let decoded;
     const decipher = createDecipher('aes-256-ecb', md5Key);
     decipher.setAutoPadding(true);

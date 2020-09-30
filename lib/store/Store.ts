@@ -1,7 +1,13 @@
 import debugFnc from 'debug';
 import { EventEmitter } from 'events';
 import { StoreOptions } from './StoreOptions';
-import { WeChatConfig } from '../config';
+import { getDefaultConfiguration, WeChatConfig } from '../config';
+import { doc } from 'prettier';
+import { isExpired } from '../utils';
+import { WeChatOptions } from '../WeChatOptions';
+import * as utils from '../utils';
+import deepmerge from 'deepmerge';
+import { isPlainObject } from 'is-plain-object';
 
 const debug = debugFnc('wechat-Store');
 
@@ -12,12 +18,20 @@ export const STORE_EVENTS = {
   DESTROY: 'DESTROY',
 };
 
-export interface StoreGlobalTokenItem extends Record<string, unknown> {
+export interface StoreGlobalTokenItemSetter extends Record<string, unknown> {
   count?: number;
   modifyDate?: string | Date;
   accessToken?: string;
   jsapi_ticket?: string;
 }
+
+export interface StoreGlobalTokenItem extends Record<string, unknown> {
+  count: number;
+  modifyDate: string | Date;
+  accessToken: string;
+  jsapi_ticket?: string;
+}
+
 export interface StoreUrlSignatureItem extends Record<string, unknown> {
   _id?: string | undefined;
   __v?: number | undefined;
@@ -33,20 +47,22 @@ export interface StoreUrlSignatureItem extends Record<string, unknown> {
   modifyDate?: string | Date;
   updated?: boolean;
 }
+
 export interface StoreOAuthItem extends Record<string, unknown> {
   _id?: string | undefined;
   __v?: number | undefined;
   key?: string;
   access_token: string;
-  refresh_token?: string;
+  refresh_token: string;
   expires_in?: number;
-  openid?: string;
+  openid: string;
   scope: string;
   expirationTime: number;
   createDate?: string | Date;
   modifyDate?: string | Date;
   updated?: boolean;
 }
+
 export interface StoreCardItem extends Record<string, unknown> {
   ticket?: string;
   expires_in?: number;
@@ -55,6 +71,7 @@ export interface StoreCardItem extends Record<string, unknown> {
   createDate?: string | Date;
   modifyDate?: string | Date;
 }
+
 export interface StoreMiniProgramItem extends Record<string, unknown> {
   openid?: string;
   session_key?: string;
@@ -67,9 +84,11 @@ export interface StoreMiniProgramItem extends Record<string, unknown> {
 export interface UrlSignaturesCollection {
   [urlAsKey: string]: StoreUrlSignatureItem;
 }
+
 export interface OAuthSignaturesCollection {
   [openIdAsKey: string]: StoreOAuthItem;
 }
+
 export interface MiniProgramSignaturesCollection {
   [openIdAsKey: string]: StoreMiniProgramItem;
 }
@@ -79,6 +98,7 @@ export type StoreWechatConfig =
       store?: string; //store file path
     }
   | WeChatConfig;
+
 export interface StoreInterface {
   wechatConfig: StoreWechatConfig;
   globalToken: StoreGlobalTokenItem;
@@ -87,6 +107,7 @@ export interface StoreInterface {
   card: StoreCardItem;
   mp: MiniProgramSignaturesCollection;
 }
+const wxConfig = getDefaultConfiguration();
 
 /**
  * Store class constructor
@@ -96,10 +117,12 @@ export interface StoreInterface {
 class Store extends EventEmitter {
   cache: boolean;
   store: StoreInterface;
-  wechatInterval: NodeJS.Timeout;
+  wechatInterval?: NodeJS.Timeout;
+  refreshedTimes: number;
 
-  constructor(options: StoreOptions = {}) {
+  constructor(public options: WeChatOptions<StoreOptions>) {
     super();
+    this.refreshedTimes = 0;
 
     this.cache = true;
 
@@ -159,26 +182,32 @@ class Store extends EventEmitter {
      */
     this.store = {
       wechatConfig: {},
-      globalToken: {
-        count: 0,
-      },
+      globalToken: {} as StoreGlobalTokenItem,
       urls: {},
       oauth: {},
       card: {},
       mp: {},
     };
+    this.options = deepmerge(wxConfig, options, {
+      isMergeableObject: isPlainObject,
+    });
+    this.prepareGlobalToken().then((data) => {
+      this.store.globalToken = data;
+    });
 
     this.on(STORE_EVENTS.FLUSH_STORE, this.flush);
     this.on(STORE_EVENTS.DESTROY, this.destroy);
 
     /* istanbul ignore else */
-    if (!options.noInterval) {
+    if (!options.storeOptions?.noInterval) {
       //store to file every 10 minutes by default
       this.wechatInterval = setInterval(
         /* istanbul ignore next */ () => this.flush(),
-        options.interval || 1000 * 60 * 10,
+        options.storeOptions?.interval || 1000 * 60 * 10,
       );
     }
+    //clear the counter every 2 hour
+    setInterval(() => (this.refreshedTimes = 0), 1000 * 7200);
   }
 
   /**
@@ -195,11 +224,11 @@ class Store extends EventEmitter {
    * @return updated global token info
    */
   async updateGlobalToken(
-    info: StoreGlobalTokenItem,
+    info: StoreGlobalTokenItemSetter,
   ): Promise<StoreGlobalTokenItem> {
     const newToken = Object.assign({}, this.store.globalToken, info);
     // console.log('new token: ', newToken);
-    newToken.count++;
+    newToken.count = (newToken.count ?? 0) + 1;
     this.store.globalToken = newToken;
     await this.flush();
     debug('Access Token or jsapi ticket updated');
@@ -318,8 +347,8 @@ class Store extends EventEmitter {
   /* istanbul ignore next: handle by end user */
   async getMiniProgramSessionKey(key: string): Promise<string> {
     const session: StoreMiniProgramItem = this.store.mp[key];
-    if (!session) return Promise.resolve(null);
-    return Promise.resolve(session.session_key);
+    if (!session) return Promise.reject('session is undefined');
+    return Promise.resolve(session.session_key as string);
   }
 
   /**
@@ -366,9 +395,55 @@ class Store extends EventEmitter {
    * Destroy the Store instance
    */
   destroy(): void {
-    clearInterval(this.wechatInterval);
-    this.store = null;
+    if (this.wechatInterval) clearInterval(this.wechatInterval);
     // this.emit(STORE_EVENTS.DESTROYED, true);
+  }
+
+  /**
+   * Get new access token from wechat server, and update that to cache
+   * @param {boolean=} force force update, by default it will only get at most 5 times within 2 hours,
+   *        cause the wechat server limits the access_token requests number
+   * @return {Promise}
+   */
+  async refreshGlobalToken(force: boolean): Promise<StoreGlobalTokenItem> {
+    force || this.refreshedTimes++;
+    /* istanbul ignore if  */
+    if (!force && this.refreshedTimes > 5) {
+      return Promise.reject(
+        new Error('maximum manual refresh threshold reached!'),
+      );
+    }
+    try {
+      const result = await utils.getGlobalAccessToken(
+        this.options.appId,
+        this.options.appSecret,
+        this.options.accessTokenUrl as string,
+      );
+      return await this.updateGlobalToken({ accessToken: result.access_token });
+    } catch (err) {
+      debug(err);
+      return Promise.reject(err);
+    }
+  }
+
+  /**
+   * Get or generate global token info for signature generating process
+   * @return {Promise}
+   */
+  async prepareGlobalToken(): Promise<StoreGlobalTokenItem> {
+    const globalToken = await this.getGlobalToken();
+    if (
+      !globalToken?.accessToken ||
+      !globalToken?.modifyDate ||
+      isExpired(globalToken.modifyDate)
+    ) {
+      debug(
+        'global access token was expired, getting new global access token and ticket now...',
+      );
+      return this.refreshGlobalToken(true);
+    }
+    debug('global ticket exists, use cached access token');
+    return Promise.resolve(globalToken);
   }
 }
 

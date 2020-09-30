@@ -5,6 +5,7 @@ import dateFormat from 'date-fns/format';
 import { parse } from 'url';
 import got, { ExtendOptions } from 'got';
 import { WeChatPaymentAPIConfig } from './config';
+import { StoreGlobalTokenItem } from './store/Store';
 
 export interface GlobalAccessTokenResult {
   access_token: string;
@@ -67,7 +68,7 @@ export function paramsToString(
 ): string {
   let keys = Object.keys(args);
   keys = keys.sort();
-  const newArgs = {};
+  const newArgs: Record<string, unknown> = {};
   keys.forEach((key) => {
     const temp = noLowerCase ? key : key.toLowerCase();
     newArgs[temp] = args[key];
@@ -213,7 +214,10 @@ export async function parseXML(
     explicitArray: false,
   });
   return new Promise(function (resolve, reject) {
-    parser.parseString(xmlData, function (err, result) {
+    parser.parseString(xmlData, function (
+      err: never,
+      result: Record<string, unknown>,
+    ) {
       /* istanbul ignore if  */
       if (err) {
         debug('result: ' + result);
@@ -238,7 +242,6 @@ export async function buildXML(
     rootName: 'xml',
     cdata: true,
     headless: true,
-    allowSurrogateChars: true,
   });
   const xml = builder.buildObject(objData);
   return Promise.resolve(xml);
@@ -268,20 +271,25 @@ export function simpleDate(
 export function paymentUrlsWithSandBox(
   paymentUrls: WeChatPaymentAPIConfig,
 ): WeChatPaymentAPIConfig {
-  const keys = Object.keys(paymentUrls);
-  const newUrls = {} as WeChatPaymentAPIConfig;
-  keys.forEach((urlKey) => {
-    const paymentUrl = paymentUrls[urlKey];
-    const obj = parse(paymentUrl);
-    newUrls[urlKey] = [
-      obj.protocol,
-      '//',
-      obj.host,
-      '/sandboxnew',
-      obj.pathname,
-    ].join('');
+  const keys = Object.keys(paymentUrls) as Array<keyof WeChatPaymentAPIConfig>;
+  const newUrls = {} as any;
+
+  keys.forEach((key) => {
+    const paymentUrl = paymentUrls[key];
+    if (typeof paymentUrl === 'string') {
+      const obj = parse(paymentUrl);
+      newUrls[key] = [
+        obj.protocol,
+        '//',
+        obj.host,
+        '/sandboxnew',
+        obj.pathname,
+      ].join('');
+    } else {
+      newUrls[key] = paymentUrl;
+    }
   });
-  return newUrls;
+  return newUrls as WeChatPaymentAPIConfig;
 }
 
 export function createBuffer(

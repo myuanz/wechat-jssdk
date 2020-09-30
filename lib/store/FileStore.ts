@@ -14,13 +14,14 @@ import {
   WeChatConfig,
 } from '../config';
 import { StoreOptions } from './StoreOptions';
+import { WeChatOptions } from '../WeChatOptions';
 
 const debug = debugFnc('wechat-FileStore');
 const writeFile = promisify(_writeFile);
 
 export interface FileStoreOptions extends StoreOptions {
   fileStorePath?: string;
-  compareConfigKeys?: string[];
+  compareConfigKeys?: Array<keyof WeChatConfig>;
 }
 
 /**
@@ -30,24 +31,24 @@ class FileStore extends Store {
   fileStorePath: string;
   // store: Store;
 
-  constructor(options: FileStoreOptions = {}, wechatConfig?: WeChatConfig) {
+  constructor(options: WeChatOptions<FileStoreOptions>) {
     super(options);
 
-    this.fileStorePath = options.fileStorePath
-      ? resolve(options.fileStorePath)
+    this.fileStorePath = options.storeOptions?.fileStorePath
+      ? resolve(options.storeOptions.fileStorePath)
       : resolve(process.cwd(), 'wechat-info.json');
 
-    this.initFileStore(options, wechatConfig);
+    this.initFileStore(options);
   }
 
-  initFileStore(options: FileStoreOptions, wechatConfig: WeChatConfig): void {
+  initFileStore(options: WeChatOptions<FileStoreOptions>): void {
     debug('using FileStore[%s]...', this.fileStorePath);
 
     const emptyStore = Object.assign({}, this.store);
     let hasExistFile = true;
     const storeWechatConfig = getConfigFromCompareKeys(
-      wechatConfig,
-      options.compareConfigKeys,
+      options,
+      options.storeOptions?.compareConfigKeys ?? [],
     );
 
     try {
@@ -71,11 +72,11 @@ class FileStore extends Store {
       }
       /* istanbul ignore if */
       if (
-        (hasExistFile && options.clearStore) ||
+        (hasExistFile && options.storeOptions?.clearStore) ||
         isBreakingConfigChange(
-          wechatConfig,
+          options,
           this.store.wechatConfig as WeChatConfig,
-          options.compareConfigKeys,
+          options.storeOptions?.compareConfigKeys ?? [],
         )
       ) {
         this.store = emptyStore;

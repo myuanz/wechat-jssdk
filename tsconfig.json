@@ -4,7 +4,8 @@
     "resolveJsonModule": true,
     "target": "es2018",
     "module": "CommonJS",
-    "allowJs": true
+    "allowJs": true,
+    "allowSyntheticDefaultImports": true
   },
   "include": ["lib/**/*.ts"],
   "exclude": ["lib/client/*"]

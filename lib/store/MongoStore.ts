@@ -1,3 +1,7 @@
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-nocheck
+// TODO: Refactor database define in typegoose
+
 import debugFnc from 'debug';
 import isEmpty from 'lodash.isempty';
 import mongoose from 'mongoose';
@@ -15,6 +19,7 @@ import Store, {
   UrlSignaturesCollection,
 } from './Store';
 import { StoreOptions } from './StoreOptions';
+import { WeChatOptions } from '../WeChatOptions';
 
 const GID = 'GID';
 
@@ -96,22 +101,22 @@ class MongoStore extends Store {
   CardTicket: mongoose.Schema;
   // connection: Socket;
 
-  constructor(options: MongoStoreOptions = {}) {
+  constructor(options: WeChatOptions<MongoStoreOptions>) {
     super(options);
 
     debug('using MongoStore...');
     /* istanbul ignore if */
     if (options.hasOwnProperty('cache')) {
-      this.cache = !!options.cache;
+      this.cache = !!options.storeOptions.cache;
     }
-    this.dbName = options.dbName || 'wechat';
-    this.dbHost = options.dbHost || '127.0.0.1';
-    this.dbPort = options.dbPort || '27017';
+    this.dbName = options.storeOptions.dbName || 'wechat';
+    this.dbHost = options.storeOptions.dbHost || '127.0.0.1';
+    this.dbPort = options.storeOptions.dbPort || '27017';
     this.dbAddress =
-      options.dbAddress ||
+      options.storeOptions.dbAddress ||
       `mongodb://${this.dbHost}:${this.dbPort}/${this.dbName}`;
 
-    this.initLimit = options.limit || 20;
+    this.initLimit = options.storeOptions.limit || 20;
 
     // console.log('this.dbAddress: ', this.dbAddress);
 
@@ -125,7 +130,7 @@ class MongoStore extends Store {
           useCreateIndex: true,
           useFindAndModify: false,
         },
-        options.dbOptions,
+        options.storeOptions.dbOptions,
       ),
     );
 
@@ -435,6 +440,8 @@ class MongoStore extends Store {
       if (batchedKeys.length <= 0) {
         return resolve();
       }
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
       bulk.execute(function (err) {
         if (err) {
           debug(err);
@@ -454,6 +461,8 @@ class MongoStore extends Store {
       return;
     }
     const keys = Object.keys(oauthTokens);
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
     const bulk = this.OAuthToken.collection.initializeOrderedBulkOp();
     const batchedKeys = [];
     keys.forEach((key) => {
@@ -475,6 +484,8 @@ class MongoStore extends Store {
       if (batchedKeys.length <= 0) {
         return resolve();
       }
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
       bulk.execute(function (err) {
         if (err) {
           debug(err);
@@ -505,15 +516,17 @@ class MongoStore extends Store {
 
   /* istanbul ignore next */
   destroy(): void {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
     this.connection.close((err) => {
       if (err) {
         debug(err);
       }
     });
-    this.Signature = null;
-    this.GlobalToken = null;
-    this.OAuthToken = null;
-    this.CardTicket = null;
+    // this.Signature = null;
+    // this.GlobalToken = null;
+    // this.OAuthToken = null;
+    // this.CardTicket = null;
     super.destroy();
     debug('mongoStore destroyed!');
   }

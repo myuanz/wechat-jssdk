@@ -7,6 +7,8 @@ import { getDefaultConfiguration, checkPassedConfiguration } from './config';
 import Store, { StoreOAuthItem } from './store/Store';
 import FileStore from './store/FileStore';
 import { WeChatOptions } from './WeChatOptions';
+import deepmerge from 'deepmerge';
+import { isPlainObject } from 'is-plain-object';
 
 const debug = debugFnc('wechat-OAuth');
 
@@ -33,22 +35,24 @@ class OAuth {
   store: Store;
   snsUserInfoUrl: string;
   snsUserBaseUrl: string;
-  constructor(options?: WeChatOptions) {
+  constructor(options: WeChatOptions) {
     checkPassedConfiguration(options);
 
-    this.options = isEmpty(options)
-      ? /* istanbul ignore next  */ { ...wxConfig }
-      : { ...wxConfig, ...options };
+    this.options = deepmerge(wxConfig, options, {
+      isMergeableObject: isPlainObject,
+    });
 
     this.oAuthUrl = this.options.oAuthUrl + '?';
 
-    this.setDefaultOAuthUrl();
+    const defaultOAuthUrl = this.generateDefaultOAuthUrl();
+    this.snsUserBaseUrl = defaultOAuthUrl.snsUserBaseUrl;
+    this.snsUserInfoUrl = defaultOAuthUrl.snsUserInfoUrl;
 
     //no custom store provided, using default FileStore
     /* istanbul ignore if  */
     if (!options.store || !(options.store instanceof Store)) {
       debug('[OAuth]Store not provided, using default FileStore...');
-      this.store = new FileStore(options.storeOptions);
+      this.store = new FileStore(options);
     } else {
       this.store = options.store;
     }
@@ -122,10 +126,12 @@ class OAuth {
       tempOAuthParams.scope = scope;
     }
 
-    const keys = Object.keys(tempOAuthParams);
+    const keys = Object.keys(tempOAuthParams) as Array<
+      keyof typeof tempOAuthParams
+    >;
     //sort the keys for correct order on url query
     keys.sort();
-    const oauthParams = {};
+    const oauthParams = {} as typeof tempOAuthParams;
     keys.forEach((key) => (oauthParams[key] = tempOAuthParams[key]));
 
     url += stringify(oauthParams);
@@ -193,7 +199,7 @@ class OAuth {
   ): Promise<StoreOAuthItem> {
     debug('getting new oauth access token...');
     try {
-      const data = ((await utils.sendWechatRequest('/sns/oauth2/access_token', {
+      const data = ((await utils.sendWechatRequest('sns/oauth2/access_token', {
         prefixUrl: this.options.apiUrl,
         searchParams: {
           appid: this.options.appId,
@@ -230,6 +236,8 @@ class OAuth {
         {
           prefixUrl: this.options.apiUrl,
           searchParams: {
+            // The spelling is correct
+            // https://developers.weixin.qq.com/doc/offiaccount/OA_Web_Apps/Wechat_webpage_authorization.html
             appid: this.options.appId,
             refresh_token: tokenInfo.refresh_token,
             grant_type: 'refresh_token',
@@ -263,6 +271,21 @@ class OAuth {
     });
   }
 
+  generateDefaultOAuthUrl(): {
+    snsUserInfoUrl: string;
+    snsUserBaseUrl: string;
+  } {
+    let temp = this.options.wechatRedirectUrl;
+    /* istanbul ignore else  */
+    if (!temp) {
+      temp = this.options.wechatRedirectHost + '/wechat/oauth-callback';
+    }
+    return {
+      snsUserInfoUrl: this.generateOAuthUrl(temp, oauthScope.USER_INFO),
+      snsUserBaseUrl: this.generateOAuthUrl(temp, oauthScope.BASE),
+    };
+  }
+
   /**
    * Set default wechat oauth url for the instance
    */
@@ -272,8 +295,9 @@ class OAuth {
     if (!temp) {
       temp = this.options.wechatRedirectHost + '/wechat/oauth-callback';
     }
-    this.snsUserInfoUrl = this.generateOAuthUrl(temp, oauthScope.USER_INFO);
-    this.snsUserBaseUrl = this.generateOAuthUrl(temp, oauthScope.BASE);
+    const defaultOAuthUrl = this.generateDefaultOAuthUrl();
+    this.snsUserBaseUrl = defaultOAuthUrl.snsUserBaseUrl;
+    this.snsUserInfoUrl = defaultOAuthUrl.snsUserInfoUrl;
   }
 
   /**

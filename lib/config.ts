@@ -25,7 +25,7 @@ export interface WeChatPaymentConfig {
   paymentCertificatePfx?: string | Buffer;
   paymentPassphrase?: string;
   merchantId: string;
-  paymentAPI: WeChatPaymentAPIConfig;
+  paymentAPI?: WeChatPaymentAPIConfig;
   // PAYMENT_HOST: string;
   // PAYMENT_HOST_PORT: number;
 }
@@ -51,17 +51,17 @@ export interface WeChatConfig {
   appId: string;
   //your wechat appSecret
   appSecret: string;
-  ticketUrl: string;
-  accessTokenUrl: string;
-  oAuthUrl: string;
-  apiUrl: string;
+  ticketUrl?: string;
+  accessTokenUrl?: string;
+  oAuthUrl?: string;
+  apiUrl?: string;
   //state in oauth callback query
-  oAuthState: string;
+  oAuthState?: string;
   //
-  decodeCardCodeUrl: string;
+  decodeCardCodeUrl?: string;
   //
-  miniProgram: WeChatMiniProgramConfig;
-  payment: WeChatPaymentConfig;
+  miniProgram?: WeChatMiniProgramConfig;
+  payment?: WeChatPaymentConfig;
 }
 
 const wechatConfig: WeChatConfig = {
@@ -143,19 +143,18 @@ const wechatConfig: WeChatConfig = {
   },
 };
 
-export const COMPARE_CONFIG_KEYS = [
+export const COMPARE_CONFIG_KEYS: Array<keyof WeChatConfig> = [
   'appId',
   'wechatRedirectUrl',
-  'paymentSandBox',
 ];
 
 export function getConfigFromCompareKeys(
   wechatConfig: WeChatConfig,
   compareKeys = COMPARE_CONFIG_KEYS,
 ): Record<string, unknown> {
-  const ret = {};
-  compareKeys.forEach((k) => (ret[k] = wechatConfig[k]));
-  return ret;
+  return compareKeys
+    .map((key) => ({ key: key, value: wechatConfig[key] }))
+    .reduce((acc, i) => ({ ...acc, [i.key]: i.value }));
 }
 
 /**
@@ -200,7 +199,7 @@ export function isBreakingConfigChange(
   let isBreaking = false;
   for (let i = 0; i < compareKeys.length; i++) {
     const key = compareKeys[i];
-    if (newConfig[key] != oldConfig[key]) {
+    if ((newConfig[key] as never) != (oldConfig[key] as never)) {
       isBreaking = true;
       break;
     }

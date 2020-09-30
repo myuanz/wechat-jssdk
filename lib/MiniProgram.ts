@@ -7,6 +7,8 @@ import { getDefaultConfiguration, WeChatMiniProgramConfig } from './config';
 import Store, { StoreMiniProgramItem } from './store/Store';
 import FileStore from './store/FileStore';
 import { WeChatOptions } from './WeChatOptions';
+import deepmerge from 'deepmerge';
+import { isPlainObject } from 'is-plain-object';
 
 const debug = debugFnc('wechat-MiniProgram');
 
@@ -46,9 +48,9 @@ class MiniProgram {
     );
     options.miniProgram = miniOptions;
 
-    this.options = isEmpty(options)
-      ? /* istanbul ignore next  */ { ...wxConfig }
-      : { ...wxConfig, ...options };
+    this.options = deepmerge(wxConfig, options, {
+      isMergeableObject: isPlainObject,
+    });
     //alias
     this.appId = miniOptions.appId;
     this.appSecret = miniOptions.appSecret;
@@ -59,7 +61,7 @@ class MiniProgram {
       /* istanbul ignore next  */ !(options.store instanceof Store)
     ) {
       debug('[MiniProgram]Store not provided, using default FileStore...');
-      this.store = new FileStore(options.storeOptions);
+      this.store = new FileStore(options);
     } else {
       this.store = options.store;
     }
@@ -86,7 +88,7 @@ class MiniProgram {
           },
         },
       );
-      await this.store.setMiniProgramSession(key || data.openid, data);
+      await this.store.setMiniProgramSession((key || data.openid) ?? '', data);
       return Promise.resolve(data);
     } catch (err) {
       debug(err);
@@ -162,7 +164,7 @@ class MiniProgram {
     if (!sessionKey && key) {
       p = this.store.getMiniProgramSessionKey(key);
     } else {
-      p = Promise.resolve(sessionKey);
+      p = Promise.resolve(sessionKey ?? '');
     }
 
     try {

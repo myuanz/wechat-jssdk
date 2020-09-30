@@ -7,6 +7,8 @@ import Store, { StoreCardItem, StoreGlobalTokenItem } from './store/Store';
 import FileStore from './store/FileStore';
 import { errorByAccessTokenRelated } from './code';
 import { WeChatOptions } from './WeChatOptions';
+import deepmerge from 'deepmerge';
+import { isPlainObject } from 'is-plain-object';
 
 const debug = debugFnc('wechat-Card');
 
@@ -61,17 +63,17 @@ class Card {
   options: WeChatOptions;
   store: Store;
 
-  constructor(options?: WeChatOptions) {
+  constructor(options: WeChatOptions) {
     checkPassedConfiguration(options);
 
-    this.options = isEmpty(options)
-      ? /* istanbul ignore next  */ { ...wxConfig }
-      : { ...wxConfig, ...options };
+    this.options = deepmerge(wxConfig, options, {
+      isMergeableObject: isPlainObject,
+    });
 
     /* istanbul ignore if  */
     if (!options.store || !(options.store instanceof Store)) {
       debug('[Card]Store not provided, using default FileStore...');
-      this.store = new FileStore(options.storeOptions);
+      this.store = new FileStore(options);
     } else {
       this.store = options.store;
     }
@@ -101,7 +103,7 @@ class Card {
       let data: {
         errcode?: number;
         errmsg?: string;
-      } = await utils.sendWechatRequest(this.options.ticketUrl, {
+      } = await utils.sendWechatRequest(this.options.ticketUrl as string, {
         searchParams: params,
       });
       data = Object.assign({ modifyDate: new Date() }, data);
@@ -126,7 +128,7 @@ class Card {
       const globalToken = await utils.getGlobalAccessToken(
         cfg.appId,
         cfg.appSecret,
-        cfg.accessTokenUrl,
+        cfg.accessTokenUrl as string,
       );
       const info = {
         modifyDate: new Date(),
@@ -137,8 +139,8 @@ class Card {
 
     const globalToken1 = await this.store.getGlobalToken();
     if (
-      !globalToken1 ||
-      !globalToken1.accessToken ||
+      !globalToken1?.accessToken ||
+      !globalToken1?.modifyDate ||
       utils.isExpired(globalToken1.modifyDate)
     ) {
       debug(
@@ -147,7 +149,7 @@ class Card {
       const globalToken2 = await utils.getGlobalAccessToken(
         cfg.appId,
         cfg.appSecret,
-        cfg.accessTokenUrl,
+        cfg.accessTokenUrl as string,
       );
       const info = {
         modifyDate: new Date(),
@@ -166,8 +168,8 @@ class Card {
     try {
       const ticketInfo = await this.store.getCardTicket();
       if (
-        ticketInfo &&
-        ticketInfo.ticket &&
+        ticketInfo?.ticket &&
+        ticketInfo?.modifyDate &&
         !utils.isExpired(ticketInfo.modifyDate)
       ) {
         return Promise.resolve(ticketInfo);
@@ -203,13 +205,13 @@ class Card {
     };
     try {
       const ticketInfo = await this.getApiTicket();
-      infoForCardSign.api_ticket = ticketInfo.ticket;
-      const keys = Object.keys(infoForCardSign);
+      infoForCardSign.api_ticket = ticketInfo.ticket as string;
+      const keys = Object.keys(infoForCardSign) as Array<keyof CardSignObject>;
       const values = keys.map((key) => infoForCardSign[key]);
       values.sort();
       infoForCardSign.cardSign = utils.genSHA1(values.join(''));
-      infoForCardSign.appid = undefined;
-      infoForCardSign.api_ticket = undefined;
+      infoForCardSign.appid = '';
+      infoForCardSign.api_ticket = '';
       infoForCardSign.signType = 'SHA1';
       return Promise.resolve(infoForCardSign);
     } catch (reason) {
@@ -258,7 +260,7 @@ class Card {
     try {
       const ticketInfo = await this.getApiTicket();
       infoForCardExt.api_ticket = ticketInfo.ticket;
-      const keys = Object.keys(infoForCardExt);
+      const keys = Object.keys(infoForCardExt) as Array<keyof CardExtObject>;
       const values = keys.map((key) => infoForCardExt[key]);
       infoForCardExt.signature = utils.genSHA1(values.sort().join(''));
       if (fixedBeginTimestamp) {
@@ -285,7 +287,7 @@ class Card {
     encryptCode: string,
     qs: { [key: string]: string | number | boolean },
   ): Promise<Record<string, unknown>> {
-    return utils.sendWechatRequest(this.options.decodeCardCodeUrl, {
+    return utils.sendWechatRequest(this.options.decodeCardCodeUrl as string, {
       searchParams: qs,
       method: 'POST',
       json: {

@@ -50,12 +50,17 @@
   "dependencies": {
     "date-fns": "2.14.0",
     "debug": "4.1.1",
+    "deepmerge": "^4.2.2",
     "got": "11.3.0",
+    "is-plain-object": "^5.0.0",
     "lodash.isempty": "4.4.0",
     "mongoose": "5.9.20",
     "xml2js": "0.4.23"
   },
   "devDependencies": {
+    "@types/debug": "^4.1.5",
+    "@types/lodash.isempty": "^4.4.6",
+    "@types/xml2js": "^0.4.5",
     "@typescript-eslint/eslint-plugin": "3.4.0",
     "@typescript-eslint/parser": "3.4.0",
     "body-parser": "1.19.0",

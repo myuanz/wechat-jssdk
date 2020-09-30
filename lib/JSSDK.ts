@@ -6,11 +6,14 @@ import { getDefaultConfiguration, checkPassedConfiguration } from './config';
 
 import Store, {
   StoreGlobalTokenItem,
+  StoreGlobalTokenItemSetter,
   StoreUrlSignatureItem,
 } from './store/Store';
 import FileStore from './store/FileStore';
 import { WeChatOptions } from './WeChatOptions';
 import { GlobalAccessTokenResult } from './utils';
+import deepmerge from 'deepmerge';
+import { isPlainObject } from 'is-plain-object';
 
 const debug = debugFnc('wechat-JSSDK');
 
@@ -21,31 +24,23 @@ const wxConfig = getDefaultConfiguration();
  * @return {JSSDK} JSSDK instance
  */
 class JSSDK {
-  refreshedTimes: number;
   options: WeChatOptions;
   store: Store;
 
-  constructor(options?: WeChatOptions) {
+  constructor(options: WeChatOptions) {
     checkPassedConfiguration(options);
-    this.refreshedTimes = 0;
-    this.options = isEmpty(options)
-      ? /* istanbul ignore next  */ { ...wxConfig }
-      : { ...wxConfig, ...options };
+    this.options = deepmerge(wxConfig, options, {
+      isMergeableObject: isPlainObject,
+    });
 
     //no custom store provided, using default FileStore
     /* istanbul ignore if  */
     if (!options.store || !(options.store instanceof Store)) {
       debug('[JSSDK]Store not provided, using default FileStore...');
-      this.store = new FileStore(options.storeOptions);
+      this.store = new FileStore(options);
     } else {
       this.store = options.store;
     }
-
-    //clear the counter every 2 hour
-    setInterval(
-      () => (this.refreshedTimes = 0),
-      options.clearCountInterval || 1000 * 7200,
-    );
   }
 
   /**
@@ -95,7 +90,7 @@ class JSSDK {
    */
   static normalizeUrl(url: string): string {
     const temp = parse(url);
-    const hashIndex = url.indexOf(temp.hash);
+    const hashIndex = url.indexOf(temp.hash || '');
     //remove hash from url
     return hashIndex > 0 ? url.substring(0, hashIndex) : url;
   }
@@ -113,13 +108,13 @@ class JSSDK {
     accessToken: string,
     ticket: string,
   ): StoreUrlSignatureItem {
-    const ret = {
+    const ret: StoreUrlSignatureItem = {
       jsapi_ticket: ticket,
       nonceStr: JSSDK.createNonceStr(),
       timestamp: utils.timestamp(),
       url: JSSDK.normalizeUrl(url),
-      signature: null,
-      accessToken: null,
+      signature: '',
+      accessToken: '',
     };
     const originalStr = utils.paramsToString(ret);
     ret.signature = utils.genSHA1(originalStr);
@@ -148,7 +143,7 @@ class JSSDK {
     return utils.getGlobalAccessToken(
       cfg.appId,
       cfg.appSecret,
-      cfg.accessTokenUrl,
+      cfg.accessTokenUrl as string,
     );
   }
 
@@ -167,7 +162,7 @@ class JSSDK {
       type: 'jsapi',
     };
     try {
-      return (await utils.sendWechatRequest(this.options.ticketUrl, {
+      return (await utils.sendWechatRequest(this.options.ticketUrl as string, {
         searchParams: params,
       })) as { ticket: string };
     } catch (err) {
@@ -186,7 +181,7 @@ class JSSDK {
     token: string,
     ticket: string,
   ): Promise<StoreGlobalTokenItem> {
-    const info: StoreGlobalTokenItem = { modifyDate: new Date() };
+    const info: StoreGlobalTokenItemSetter = { modifyDate: new Date() };
     token && (info.accessToken = token);
     ticket && (info.jsapi_ticket = ticket);
     return this.store.updateGlobalToken(info);
@@ -198,18 +193,11 @@ class JSSDK {
    *        cause the wechat server limits the access_token requests number
    * @return {Promise}
    */
-  async getGlobalTokenAndTicket(force: boolean): Promise<StoreGlobalTokenItem> {
-    force || this.refreshedTimes++;
-    /* istanbul ignore if  */
-    if (!force && this.refreshedTimes > 5) {
-      return Promise.reject(
-        new Error('maximum manual refresh threshold reached!'),
-      );
-    }
+  async getGlobalTokenAndTicket(): Promise<StoreGlobalTokenItem> {
     let accessToken = '';
     try {
-      const result = await this.getAccessToken();
-      accessToken = result.access_token;
+      const result = await this.store.prepareGlobalToken();
+      accessToken = result.accessToken;
       const ticketResult = await this.getJsApiTicket(accessToken);
       return await this.updateAccessTokenOrTicketGlobally(
         accessToken,
@@ -219,26 +207,6 @@ class JSSDK {
       debug(err);
       return Promise.reject(err);
     }
-  }
-
-  /**
-   * Get or generate global token info for signature generating process
-   * @return {Promise}
-   */
-  async prepareGlobalToken(): Promise<StoreGlobalTokenItem> {
-    const globalToken = await this.store.getGlobalToken();
-    if (
-      !globalToken ||
-      !globalToken.accessToken ||
-      JSSDK.isTokenExpired(globalToken.modifyDate)
-    ) {
-      debug(
-        'global access token was expired, getting new global access token and ticket now...',
-      );
-      return this.getGlobalTokenAndTicket(true);
-    }
-    debug('global ticket exists, use cached access token');
-    return Promise.resolve(globalToken);
   }
 
   /**
@@ -257,6 +225,8 @@ class JSSDK {
     if (existing) {
       debug('wechat url signature existed, try updating the signature...');
       sig = await this.updateSignature(signature.url, signature);
+    } else if (!signature.signatureName) {
+      return Promise.reject(new Error('signature.signatureName is undefined'));
     } else {
       sig = await this.store.saveSignature(signature.signatureName, signature);
     }
@@ -277,7 +247,6 @@ class JSSDK {
     url = JSSDK.normalizeUrl(url);
     info.modifyDate = new Date();
     delete info.createDate;
-    delete info.url; //prevent changing the original url
     delete info.signatureName; //prevent changing the original name
     const signature = await this.store.updateSignature(url, info);
     debug('update wechat signature finished');
@@ -299,7 +268,7 @@ class JSSDK {
     if (
       !forceNewSignature &&
       signature &&
-      !JSSDK.isTokenExpired(signature.modifyDate)
+      !JSSDK.isTokenExpired(signature.modifyDate ?? new Date(0))
     ) {
       signature = this.filterSignature(signature);
       return Promise.resolve(signature);
@@ -313,11 +282,11 @@ class JSSDK {
    * @return {Promise} resolved with filtered signature results
    */
   async createSignature(url: string): Promise<StoreUrlSignatureItem> {
-    const data = await this.prepareGlobalToken();
+    const data = await this.store.prepareGlobalToken();
     const ret = JSSDK.generateSignature(
       url,
-      data.accessToken,
-      data.jsapi_ticket,
+      data.accessToken as string, // prepareGlobalToken make sure this filed is not undefined
+      data.jsapi_ticket as string, // prepareGlobalToken make sure this filed is not undefined
     );
     ret.signatureName = ret.url;
     const signature = await this.saveSignature(ret);
